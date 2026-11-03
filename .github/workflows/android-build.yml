@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - 'AURELIA_Phase21.zip'
+      - 'AURELIA_Integrated_WorkingCopy_Phase34.zip'
       - '.github/workflows/android-build.yml'
 
 permissions:
@@ -27,19 +27,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract AURELIA ZIP
+      - name: Extract AURELIA Phase 34 ZIP
         shell: bash
         run: |
           set -euo pipefail
-          test -f AURELIA_Phase21.zip
+
+          ZIP_FILE="AURELIA_Integrated_WorkingCopy_Phase34.zip"
+          test -f "$ZIP_FILE"
 
           mkdir -p "$RUNNER_TEMP/aurelia-source"
-          unzip -q AURELIA_Phase21.zip -d "$RUNNER_TEMP/aurelia-source"
+          unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/aurelia-source"
 
-          test -f "$RUNNER_TEMP/aurelia-source/aurelia_working_copy/settings.gradle.kts"
-          test -f "$RUNNER_TEMP/aurelia-source/aurelia_working_copy/app/build.gradle.kts"
+          AURELIA_ROOT="$(find "$RUNNER_TEMP/aurelia-source" -type f -name settings.gradle.kts -print -quit | xargs dirname)"
 
-          echo "AURELIA_ROOT=$RUNNER_TEMP/aurelia-source/aurelia_working_copy" >> "$GITHUB_ENV"
+          test -n "$AURELIA_ROOT"
+          test -f "$AURELIA_ROOT/app/build.gradle.kts"
+
+          echo "AURELIA_ROOT=$AURELIA_ROOT" >> "$GITHUB_ENV"
+
+          echo "AURELIA project detected successfully."
+          echo "Project root: $AURELIA_ROOT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Set up Java 21
         uses: actions/setup-java@v4
@@ -47,38 +59,17 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Detect Android SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          test -d "$SDK"
-
-          SDKMANAGER="$(find "$SDK/cmdline-tools" -type f -name sdkmanager 2>/dev/null | head -n 1)"
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: Android sdkmanager not found in $SDK"
-            exit 1
-          fi
-
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
-          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
-
-          echo "Android SDK detected: $SDK"
-          "$SDKMANAGER" --version
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Install Android SDK components
         shell: bash
         run: |
           set -euo pipefail
 
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+          yes | sdkmanager --licenses >/dev/null || true
 
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses || true
-
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
+          sdkmanager --install \
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0"
@@ -93,6 +84,7 @@ jobs:
             -o "$RUNNER_TEMP/gradle.zip"
 
           unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+
           echo "$RUNNER_TEMP/gradle-9.3.1/bin" >> "$GITHUB_PATH"
 
       - name: Configure Gradle
@@ -102,19 +94,57 @@ jobs:
         run: |
           java -version
           gradle --version
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          test -d "$ANDROID_HOME/platforms/android-36"
+          sdkmanager --list_installed
 
-      - name: Run Tests and Build APK
+      - name: Run Phase 33 Source Checks
         working-directory: ${{ env.AURELIA_ROOT }}
+        shell: bash
         run: |
-          gradle --no-daemon --stacktrace clean :app:testDebugUnitTest :app:assembleDebug
+          set -euo pipefail
 
-      - name: Upload APK
+          if [ -f AURELIA_PHASE33_CHECKS.py ]; then
+            python AURELIA_PHASE33_CHECKS.py
+          else
+            echo "Phase 33 check script not found; continuing with Gradle tests."
+          fi
+
+      - name: Run Unit Tests and Build APK
+        working-directory: ${{ env.AURELIA_ROOT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gradle --no-daemon --stacktrace clean \
+            :app:compileDebugKotlin \
+            :app:testDebugUnitTest \
+            :app:assembleDebug
+
+      - name: Generate APK Checksum and Build Info
+        working-directory: ${{ env.AURELIA_ROOT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="$(find app/build/outputs/apk/debug \
+            -maxdepth 1 -name '*.apk' -print -quit)"
+
+          test -n "$APK"
+
+          sha256sum "$APK" \
+            > app/build/outputs/apk/debug/SHA256SUMS.txt
+
+          printf 'Commit: %s\nRun: %s\n' \
+            "$GITHUB_SHA" "$GITHUB_RUN_NUMBER" \
+            > app/build/outputs/apk/debug/BUILD_INFO.txt
+
+      - name: Upload AURELIA Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: AURELIA-Debug-APK
-          path: ${{ env.AURELIA_ROOT }}/app/build/outputs/apk/debug/*.apk
+          path: |
+            ${{ env.AURELIA_ROOT }}/app/build/outputs/apk/debug/*.apk
+            ${{ env.AURELIA_ROOT }}/app/build/outputs/apk/debug/SHA256SUMS.txt
+            ${{ env.AURELIA_ROOT }}/app/build/outputs/apk/debug/BUILD_INFO.txt
           if-no-files-found: error
           retention-days: 14
 

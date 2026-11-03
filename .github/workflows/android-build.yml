@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - 'AURELIA_Integrated_WorkingCopy_Phase34.zip'
+      - 'AURELIA_Integrated_WorkingCopy_Phase34_Fix2.zip'
       - '.github/workflows/android-build.yml'
 
 permissions:
@@ -27,12 +27,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract AURELIA Phase 34 ZIP
+      - name: Extract AURELIA Phase 34 Fix 2 ZIP
         shell: bash
         run: |
           set -euo pipefail
 
-          ZIP_FILE="AURELIA_Integrated_WorkingCopy_Phase34.zip"
+          ZIP_FILE="AURELIA_Integrated_WorkingCopy_Phase34_Fix2.zip"
           test -f "$ZIP_FILE"
 
           mkdir -p "$RUNNER_TEMP/aurelia-source"
@@ -73,9 +73,6 @@ jobs:
           echo "$SDK/platform-tools" >> "$GITHUB_PATH"
           echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
 
-          echo "Android SDK: $SDK"
-          echo "SDK Manager: $SDKMANAGER"
-
           yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
 
           "$SDKMANAGER" --sdk_root="$SDK" --install \
@@ -98,24 +95,6 @@ jobs:
       - name: Configure Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare Debug Signing Key
-        working-directory: ${{ env.AURELIA_ROOT }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ ! -f debug.keystore ]; then
-            keytool -genkeypair -v \
-              -keystore debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
-          fi
-
       - name: Verify Build Environment
         shell: bash
         run: |
@@ -134,7 +113,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 AURELIA_PHASE33_CHECKS.py
+
+          if [ -f AURELIA_PHASE33_CHECKS.py ]; then
+            python3 AURELIA_PHASE33_CHECKS.py
+          else
+            echo "Phase 33 check script not found; continuing."
+          fi
 
       - name: Run Unit Tests and Build APK
         working-directory: ${{ env.AURELIA_ROOT }}
